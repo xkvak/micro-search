@@ -1,0 +1,13 @@
+{% extends "base.html" %} {% block heading %} Search Results - {{ q }} {%
+endblock %} {% block content %}
+{% set sites = {"clien": "클리앙", "dcinside": "디시인사이드", "fmkorea": "FM코리아", "theqoo": "더쿠"} %}
+<ul>
+  {% for r in results %}
+  <li>
+    <span class="tag">{{ sites.get(r.site, r.site) }}</span>
+    <span class="post-date">{{ r.created_at[:10] }}</span>
+    <a href="{{ r.url }}">{{ r.title }}</a> - Score: {{ "%.2f"|format(r.score) }}
+  </li>
+  {% endfor %}
+</ul>
+{% endblock %}
