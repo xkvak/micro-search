@@ -2,7 +2,9 @@ from array import array
 from collections import Counter, defaultdict
 import heapq
 import math
-from typing import Iterator
+from pathlib import Path
+import pickle
+from typing import Iterable, Iterator
 
 from kiwipiepy import Kiwi
 
@@ -11,21 +13,21 @@ class SearchEngine:
     KIWI = Kiwi(num_workers=-1)
     KEEP = {"NNG", "NNP", "NR", "VV", "VA", "XR", "SL", "SN", "SH"}
 
-    def __init__(self, docs: list[str], k1=1.5, b=0.75) -> None:
+    def __init__(self, k1=1.5, b=0.75) -> None:
         self.vocab: dict[str, list] = {}
-        self.docs = docs
-        self.num_docs = len(docs)
-        self.doc_len = array("H", [0]) * (self.num_docs + 1)
+        self.num_docs = 0
+        self.doc_len = array("H", [0])
         self.avg_doc_len = 0
 
         self.k1 = k1
         self.b = b
 
-    def index(self):
+    def index(self, docs: Iterable[str]):
         last = {}
         self.vocab = {}
-        for docs_id, tokens in enumerate(self.tokenize(self.docs), 1):
-            self.doc_len[docs_id] = len(tokens)
+        self.doc_len = array("H", [0])
+        for docs_id, tokens in enumerate(self.tokenize(docs), 1):
+            self.doc_len.append(len(tokens))
             for word, f_dt in Counter(tokens).items():
                 if word not in self.vocab:
                     self.vocab[word] = [0, bytearray()]
@@ -33,9 +35,10 @@ class SearchEngine:
                 self.vocab[word][0] += 1
                 self.vocab[word][1] += self.vbyte_encode(diff)
                 last[word] = docs_id
+        self.num_docs = len(self.doc_len) - 1
         self.avg_doc_len = sum(self.doc_len) / max(self.num_docs, 1)
 
-    def tokenize(self, docs: list[str]) -> Iterator[list[str]]:
+    def tokenize(self, docs: Iterable[str]) -> Iterator[list[str]]:
         for tokens in self.KIWI.tokenize(docs):
             yield [t.form.lower() for t in tokens if t.tag.split("-")[0] in self.KEEP]
 
@@ -88,3 +91,25 @@ class SearchEngine:
                     scores[d] += s
 
         return heapq.nlargest(r, scores.items(), key=lambda x: x[1])
+
+
+def title_and_body(md: str) -> str:
+    """저장된 글에서 맨 앞 메타데이터(--- ... ---)와 댓글(## 댓글 이후)을 뺀 제목 + 본문."""
+    return md.split("\n---\n", 1)[1].rsplit("\n## 댓글\n", 1)[0]
+
+
+def build_index(paths: list[Path], text=title_and_body):
+    engine = SearchEngine()
+    engine.index(text(p.read_text()) for p in paths)
+    engine.paths = [str(p) for p in paths]
+    tmp = Path("data/index.pkl.tmp")
+    tmp.write_bytes(pickle.dumps(engine))
+    tmp.replace("data/index.pkl")  # 서버가 쓰다 만 파일을 읽지 않도록 한 번에 교체
+    print(f"{engine.num_docs}개 문서 색인 → data/index.pkl")
+
+
+if __name__ == "__main__":
+    # __main__.SearchEngine으로 pickle되면 서버에서 못 읽으므로 모듈로 다시 import해 실행
+    import search_engine
+
+    search_engine.build_index(sorted(Path("data").glob("*/posts/*/*.md")))
