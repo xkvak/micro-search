@@ -1,7 +1,19 @@
 {% extends "base.html" %} {% block heading %} Search Results - {{ q }} {%
 endblock %} {% block content %}
 {% set sites = {"clien": "클리앙", "dcinside": "디시인사이드", "fmkorea": "FM코리아", "theqoo": "더쿠"} %}
-<ul>
+{% if results and ai_answer %}
+<p id="answer" class="answer">AI 요약 생성 중…</p>
+<script>
+  (async () => {
+    const box = document.getElementById("answer");
+    const res = await fetch("/answer" + location.search);
+    const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+    box.textContent = "";
+    for (let c; !(c = await reader.read()).done; ) box.textContent += c.value;
+  })();
+</script>
+{% endif %}
+<ol>
   {% for r in results %}
   <li>
     <span class="tag">{{ sites.get(r.site, r.site) }}</span>
@@ -9,5 +21,5 @@ endblock %} {% block content %}
     <a href="{{ r.url }}">{{ r.title }}</a> - Score: {{ "%.2f"|format(r.score) }}
   </li>
   {% endfor %}
-</ul>
+</ol>
 {% endblock %}
