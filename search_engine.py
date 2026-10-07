@@ -11,6 +11,7 @@ import re
 import shutil
 import sqlite3
 import sys
+import textwrap
 import threading
 from typing import Iterable, Iterator
 
@@ -109,8 +110,49 @@ class SearchEngine:
 
         return heapq.nlargest(r, scores.items(), key=lambda x: x[1])
 
+    def snippets(
+        self, query: str, mds: list[str], budget=3000, per_doc=3, rel=0.5, lam=0.7
+    ) -> list[tuple[int, str]]:
+        q = {
+            t: self.idf(p[0])
+            for t in set(next(tokenize([query])))
+            if (p := self.postings(t))
+        }
+        cands = list(
+            dict.fromkeys(
+                (i, s) for i, md in enumerate(mds) for s in passages(md) if len(s) >= 20
+            )
+        )
+        tfs = dict(zip(cands, map(Counter, tokenize(s for _, s in cands))))
+        score = {
+            c: sum(w * tf[t] * (self.k1 + 1) / (tf[t] + self.k1) for t, w in q.items())
+            for c, tf in tfs.items()
+        }
+        top = max(score.values(), default=0)
+        pool = [c for c in cands if score[c] > rel * top]
 
-COMMENT_META = re.compile(r"^(\s*- \[c\d+[^\]]*\] .*|## 댓글)$", re.M)
+        def sim(a, b):
+            ta, tb = tfs[a].keys(), tfs[b].keys()
+            return len(ta & tb) / len(ta | tb)
+
+        picked, used, per = [], 0, Counter()
+        while pool:
+            c = max(
+                pool,
+                key=lambda c: lam * score[c] / top
+                - (1 - lam) * max((sim(c, p) for p in picked), default=0),
+            )
+            pool.remove(c)
+            if used + len(c[1]) > budget:
+                break
+            if per[c[0]] < per_doc:
+                picked.append(c)
+                used += len(c[1])
+                per[c[0]] += 1
+        return picked
+
+
+COMMENT_META = re.compile(r"^(?:\s*- \[c\d+[^\]]*\] .*|## 댓글)$", re.M)
 
 
 def title_and_body(md: str) -> str:
@@ -119,6 +161,27 @@ def title_and_body(md: str) -> str:
 
 def index_text(md: str) -> str:
     return COMMENT_META.sub("", md.split("\n---\n", 1)[1])
+
+
+def passages(md: str, size=400) -> list[str]:
+    body, _, comments = md.split("\n---\n", 1)[1].partition("\n## 댓글\n")
+    text = " ".join(body.strip().partition("\n")[2].split())
+    sents = [
+        w for s in KIWI.split_into_sents(text) for w in textwrap.wrap(s.text, size)
+    ]
+    out, i = [], 0
+    while i < len(sents):
+        j, n = i, 0
+        while j < len(sents) and (j == i or n + len(sents[j]) <= size):
+            n += len(sents[j])
+            j += 1
+        out.append(" ".join(sents[i:j]))
+        if j == len(sents):
+            break
+        i = max(i + 1, (i + j) // 2)
+    return out + [
+        " ".join(c.split())[:size] for c in COMMENT_META.split(comments) if c.strip()
+    ]
 
 
 INDEX = Path("data/inverted")
